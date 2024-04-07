@@ -58,9 +58,11 @@ So after this little inspection it's time for disassembling and decompiling, the
 
 ### `main`
 We load the binary in a [free online session of binary ninja](https://cloud.binary.ninja/) (but you can choose `ghidra`, `ida`, or `cutter` shouldn't be much of a difference) and start looking at the main.
-```
-add the code
-```
+
+![](/images/FCSC-2023/pwn/pterodactyle/main-1.png)
+![](/images/FCSC-2023/pwn/pterodactyle/main-2.png)
+![](/images/FCSC-2023/pwn/pterodactyle/main-3.png)
+
 It's a switch case but on the return value of `setjump`?? Wtf is that?
 
 After a quick research `setjmp` and `longjmp` are functions used to do some `goto`s but to external places.  
@@ -76,11 +78,15 @@ But of course it doesn't work so well :') : `Do not try to be smart!`
 ### `menu`
 Now let's look at the `menu` function.
 
+![](/images/FCSC-2023/pwn/pterodactyle/menu-1.png)
+
 After a quick look, we get that it returns -1 in case we enter a number that is <=0 or >3 so we can't just do that, but we notice that the int passed as param to menu is in fact the variable that controls the `puts` of the 2nd and 3rd options! So we guess that logging in will allow us these options.  
 But we still have to log in...
 
 ### `decrypt`
 and then we take a look at the decrypt function
+
+![](/images/FCSC-2023/pwn/pterodactyle/decrypt-1.png)
 
 It takes a buffer (and modifies it) and its size as parameters and simply do a xor with `0x77` on each bytes, not what we would called a secure way of storing secrets, but this is not a reverse challenge.
 > Note: in main this decrypted buffer is compared to USERNAME and PASSWORD!
@@ -95,35 +101,43 @@ once again this is a pwn challenge ahah
 ## Start exploiting things
 ### the leak
 We log in and ask for the cookie, it's not printable ASCII: looks good!
-> /!\ Warning however looking to decompiled code with binary ninja we won't find this code: a decompiler isn't a perfect tool it soemtimes makes mistakes we must detect!
+> /!\ Warning however looking to decompiled code with binary ninja we won't find this code: a decompiler isn't a perfect tool it sometimes makes mistakes that we must detect!
 
 In assembly mode we take a look at this code and see that it writes the `env` (you know the struct that stores the state of the code at the first `setjmp`) to `stdout` we are good we have our leak!  
 Let's write a little pwntools script to display it! (properly)
 ```
 ...
 Here, get a cookie! Yum Yum! :-)
-leak: b'\x08\xec\x80"\xfc\x7f\x00\x00o\x8b?j\xbeDT\xb4\x00\x00\x00\x00\x00\x00\x00\x00\x18\xec\x80"\xfc\x7f\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00 \x10I\xd0\xf8\x7f\x00\x00o\x8b\x7fl\xbeDT\xb4o\x8b\xe1y|\xceL\xe1'
+leak: b'\xf8$S\x90\xfd\x7f\x00\x00\x1az\x81*h\xfd]*\x00\x00\x00\x00\x00\x00\x00\x00\x08%S\x90\xfd\x7f\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00@d\x06\xd8\x7f\x00\x00\x1az\xc1(h\xfd]*\x1az\x7f\x0bRm\xa7~'
 addresses:
-0x7ffc2280ec08
-0xb45444be6a3f8b6f
+0x7ffd905324f8
+0x2a5dfd682a817a1a
 0x0
-0x7ffc2280ec18
+0x7ffd90532508
 0x0
-0x7ff8d0491020
-0xb45444be6c7f8b6f
-0xe14cce7c79e18b6f
+0x7fd806644000
+0x2a5dfd6828c17a1a
+0x7ea76d520b7f7a1a
 ```
 > Note: this is what it looks like in local not in remote, you'll see later that this is important
 
 Looks good, we seems to have some stack addresses and some garbage, don't know what is it at the time, but we'll come to it later!
 
 ### the Stack Buffer Overflow
-The buffer overflow is even simpler to find, it's kinda blindingly obvious.
+OK we've got our leak but it won't help us printing the flag...  
+We must find a way to redirect the execution, meaning overwrite rip somewhere, so let's look for buffer overflows!
 
+Actually the buffer overflow is even simpler to find, it's kinda blindingly obvious.
+
+We noticed previouly when dumping the strings that the `read` symbols was used so we just check that every call do/do not overflow its buffer.  
 There are two calls to `read` when we are asked for the username and the password, and they read 0x80 characters, that is enormous!  
-Of course, the buffer is smaller and then we take a look at what we are overidding in gdb and this is the env struct itself!
+Of course, the buffer is smaller:
+```
+add the asm code
+```
+Then we take a look at what we are overidding in gdb (`b *main+212`) and this is the env struct itself!
 
-sending a username or password of ~0x80 bytes proves this theory:
+sending a username or password of 0x80 bytes proves this theory:
 ```
  $ ./pterodactyle 
 1: Log in
@@ -135,7 +149,7 @@ Password:
 >> Wrong password!
 Segmentation fault
 ```
-A seg fault, like that smell!
+a SIGSEGV, I like that smell!
 
 ### the BIG problem
 > I took a veryyyyyy long time (like almost 8-10h) understanding what's coming next, I've first tried to bruteforce  
@@ -201,31 +215,112 @@ But how to reverse it to know how to modify the cookie?
 
 The glibc mangling code for x86_64 can be found [here](https://codebrowser.dev/glibc/glibc/sysdeps/unix/sysv/linux/x86_64/sysdep.h.html#_M/PTR_MANGLE) 
 
-so the mangling consists of:
-rol(ptr XOR key, 17 bits)
-to invert it we simply have to perform a ror (bitwise rotation right) of 17 bits and then xor with the key
-problem is that we don't know the key, also this key is randomly chose at runtime so unique per process
+It's basically a XOR with a random-runtime-chosen key (explained at [Pointer Guard glibc wiki](https://sourceware.org/glibc/wiki/PointerEncryption)) and then a bitwise rotation left:  
+`rol(<ptr> XOR key, 17 bits)`
 
-This is a bit of cryptography but nothing difficult in the end
-the really interesting thing is that XOR isn't a good cryptographic function
-AND we know part the plain pointers!
-in fact rbx is not mangled neither are r12, .. r15
-and rbx points to the env variables in the stack, which is not far from the address rbp points to
-using rbx as a partial known plain text we can then guess the 12-13 first hexa characters of the address! 
-(depending where the stack rabdomly starts (due to ASLR))
+So to invert it, we simply have to perform a `ror` (bitwise rotation right) of 17 bits and then a XOR with the key!  
+Only one problem: we don't know the key... (and it is randomly chosen at runtime)
 
-that's good we only have 3 charcaters unknwn ! but that's still too high because the CTF doesn't allow bruteforce (but this is clearly bruteforceable)
-however we're lucky beacue PIE doesn't randoms the whole address of the program!
-In fact the start of the sections PIE chooses always finish by 3 0 hexa charac (meaning in can't start at 0x0..1546 it start at 0x0..X000)
-this is a known technics to guess what libc is used on remote using the last 3 hexa characters of symbols but in our case we'll use it as a partial known plain text
-and that's perfect because it is exactly what was missing for recovering the whole key!!
+However, XOR isn't a good cryptographic function **AND** we know part of the plain pointers!
+
+Ok, let's what information we've got:
+ - rbx is not mangled neither are r12, .. r15
+ - looking at in gdb **(local)**, rbx points to the env variables in the stack, which is not far from the address rbp points to!
+ - then using rbx as a partial known plain text we can then guess the 12-13 first hexa characters of the address! (depending on where the stack rabdomly starts due to ASLR)
+
+That's good we only have 3 charcaters unknown!  
+But that's still too high because the CTF doesn't allow bruteforce (but this is clearly bruteforceable)...
+
+However we're lucky because PIE *(Position Independant Executable)* doesn't random the whole address of the program base!
+In fact the start of the sections PIE chooses always finish by 3 0 hexa charac  
+*Meaning: it can't start at 0x0..1546*   
+*it starts at 0x0..Y000*
+
+This is a well known technic to guess what libc is used on remote using the last 3 hexa characters of leaked symbols but in our case we'll use it as a partial known plain text.
+
+And that's perfect because it is exactly what was missing for recovering the whole key!!  
+Here is a little schema to understand it (we ignore the bitwise rotation here)
+```
+we'll use:
+
+rbp_mangled = rbp XOR key 
+so:
+key = rbp_mangled XOR rbp
+then:
+key_truncated = rbp_mangled XOR rbp_truncated
+
+but remember: rbx is close to rbp so:
+rbp_truncated = rbx_truncated 
+and we know plain rbx!
+
+simplified version with 8 bits (real addresses are 8 bytes)
+LEAKED STACK: 1 0 0 1 1 0 X X (rbx truncated)
+RBP MANGLED : 0 1 0 0 1 0 1 0
+PARTIAL KEY : 1 1 0 1 0 0 X X --> we recovered part of the key!
+
+we apply the same technic with the end of the key:
+KNOWN RIP   : X X X X X X 0 1
+RIP MANGLED : 1 1 0 1 0 0 1 1
+PARTIAL KEY2: X X X X X X 1 0
+
+and then we got the full key:
+KEY = PARTIAL KEY|PARTIAL KEY2 (concat after truncating the garbage parts)
+```
 And just like that we can guess the key used and then demangle properly rip!
 
-a little schema ?
+We can recover rip, add the delta to make it points to the beginning of the section that prints the flag (remember at the beginning when reversing we noticed this weird 42 option in the switch case that prints the flag):
+```
+end of rip = 0x131f
+start of flag section = 0x1595
 
-We can recover rip, adds the delta to make it points to the beginning of the section that prints the flag (remember at the beginning when reversing we noticed this weird 42 option in the switch case that prints the flag)
-the we re-mangle the new computed rip, modifies the cookie, add the perfect padding and use the overflow we previously detected!
-and that works! we get the flag!
+delta = 0x1595 - 0x131f = 630
+
+new_rip = rip_demangled + 630
+```
+The we re-mangle the new rip with `rol(<ptr> XOR key, 17 bits)`, modify the cookie, add the perfect padding (0x20 character in the case of the username input) and use the overflow we previously detected!  
+That way we perfectly overwrite the `env` struct that is passed to `longjmp`, it reads it normally and demangle our crafted rip then jumps to the 42 option in the switch and...
+```
+Here, get a cookie! Yum Yum! :-)
+leak: b'\xf8$S\x90\xfd\x7f\x00\x00\x1az\x81*h\xfd]*\x00\x00\x00\x00\x00\x00\x00\x00\x08%S\x90\xfd\x7f\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00@d\x06\xd8\x7f\x00\x00\x1az\xc1(h\xfd]*\x1az\x7f\x0bRm\xa7~'
+addresses:
+0x7ffd905324f8
+0x2a5dfd682a817a1a
+0x0
+0x7ffd90532508
+0x0
+0x7fd806644000
+0x2a5dfd6828c17a1a
+0x7ea76d520b7f7a1a
+1: Log in
+2: Get cookie
+3: Logout
+0: Exit
+>>
+key_start/key_end: bd0d6ad36ee731b8 bd0d3f53b6a916a0
+key: 0xbd0d6ad36ee736a0
+inject new rip b'\x955N\xd8\x80U\x00\x00' at 0x38 in the cookie
+new cookie is:
+addresses:
+0x7ffd905324f8
+0x2a5dfd682a817a1a
+0x0
+0x7ffd90532508
+0x0
+0x7fd806644000
+0x2a5dfd6828c17a1a
+0x7ea76d52066b7a1a
+Bye bye o/
+1: Log in
+0: Exit
+>>
+Login:
+>>
+Password:
+>>
+Wrong password!
+FCSC{FAKE_FLAG}
+```
+that works! we get the flag!
 
 ## Post Scriptums and mea culpa
 PS: I got very lucky because on remote the leak looks like:
@@ -239,9 +334,10 @@ PS: I got very lucky because on remote the leak looks like:
 0xf810053be157ca87
 0x16ea2df3e3a9ca87
 ```
-the stack is not leaked! OFC because this piece of code is heavily platform-dependant and the libc is probably not the same that mine  
-luckily for me I don't need to guess the whole key, because even if I don't know the real stack adress I don't need it, only the 3 last hexa character must be changed  
-then what I took for the stack leak (0x0) will give me the wrong secret key but because I'll change only the last 3 hexa charcacters and directly re-encrypt the address in the payload it will be transparent, tks to X ^ X ^ A = A and the fact that the mangling isn't chaining the bytes but done byte by byte (this is similar to the AES-ECB vulnerability known is cryptography).
-A big tks to [GammaRay99](https://github.com/GammaRay99/CTF-WRITEUPS/tree/main/FCSC2023/pwn/pterodactyle) for making me understand a mistake I didn't even saw!
+The stack is not leaked! OFC because the libc is probably not the same that mine so rbx and other registers probably don't store the same values when `setjmp` is called!
 
-**PPS:** as already discussed, randomly the exploit can fail because of ASLR poorly randomizing the stack start given us only 12 valid hexa character in common between rbx and rbp and the crashing the program with sigsegv, but trying it a few time it will work!
+Luckily for me I don't need to guess the whole key, because even if I don't know the real stack adress I don't need it, only the 3 last hexa character must be changed  
+Then what I took for the stack leak (0x0) will give me the wrong secret key but because I'll change only the last 3 hexa charcacters and directly re-encrypt the address in the payload it will be transparent:  
+Tks to X ^ X ^ A = A and the fact that the mangling isn't chaining the bytes but done byte by byte.
+
+A big tks to [GammaRay99](https://github.com/GammaRay99/CTF-WRITEUPS/tree/main/FCSC2023/pwn/pterodactyle) for making me understand a mistake I didn't even saw!
