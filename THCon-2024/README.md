@@ -17,6 +17,6 @@ We made the **18th place** over 32 teams onsite, and 24 over 130 teams online (a
 
 ## Links
 **THCon Website**: https://thcon.party  
-**THCon CTF**: https://ctf.thcon.party
-**Discord**: https://discord.com/invite/DvDjQAHNaH
+**THCon CTF**: https://ctf.thcon.party  
+**Discord**: https://discord.com/invite/DvDjQAHNaH  
 **Write ups**: *in the `writeups` [channel](https://discordapp.com/channels/817478318865121382/1226135501862473738) of their discord*  
