@@ -1,4 +1,3 @@
-
 # THCon 2024
 ## About
 The [THCon](https://thcon.party/), which stands for Toulouse Hacking Convention, is organized by a team of professionals, students and researchers from all over France, in Toulouse, France.  
