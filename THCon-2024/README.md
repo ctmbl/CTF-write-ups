@@ -9,8 +9,9 @@ It's first of all a 2-day convention on Thursday and Friday, where you can follo
 It's a team, online **and** onsite, Jeopardy CTF and the flag format is `^THCON{.+}$`, the main categories are Pwn, Reverse, Network and Steganography.
 
 ## Our team
-I compete this year with the `Supwn` student team from `SupAero`.  
+I competed this year with the `Supwn` student team from `SupAero`.  
 We made the **18th place** over 32 teams onsite, and 24 over 130 teams online (at 6PM the end of the onsite CTF, the remote continued during the night).
+
 ![](../images/THCon-2024/Supwn_results.png)
 ![](../images/THCon-2024/Supwn_team.png)
 
